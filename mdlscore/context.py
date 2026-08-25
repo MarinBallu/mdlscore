@@ -1,6 +1,7 @@
 """Gather repo context text from arbitrary files/directories."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -17,13 +18,12 @@ def _iter_files(path: Path) -> Iterator[Path]:
         return
     if not path.is_dir():
         return
-    for child in sorted(path.iterdir()):
-        if child.is_dir():
-            if child.name in _SKIP_DIRS or child.name.startswith("."):
-                continue
-            yield from _iter_files(child)
-        elif child.is_file():
-            yield child
+    for dirpath, dirnames, filenames in os.walk(path):
+        dirnames[:] = sorted(
+            d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")
+        )
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
 
 
 def gather_context(paths: Iterable[str | Path], root: Path | None = None) -> str:

@@ -4,24 +4,26 @@ from pathlib import Path
 import pytest
 
 from mdlscore import cli
-from mdlscore.scorer import ScoreResult, Scorer
+from mdlscore.scorer import ScoreResult
 
 
-class _FakeScorer(Scorer):
-    """Deterministic stand-in for a real model, so the CLI can be tested
-    without downloading or running one."""
+@pytest.fixture
+def fake_score_file(monkeypatch):
+    """Stands in for mdlscore.score_file, recording how the CLI called it."""
+    calls = []
 
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
+    def fake(target_path, context_paths=(), backend="local-lm", **backend_kwargs):
+        calls.append({
+            "target_path": target_path,
+            "context_paths": list(context_paths),
+            "backend": backend,
+            **backend_kwargs,
+        })
+        text = Path(target_path).read_text()
+        return ScoreResult(num_tokens=len(text), total_nats=float(len(text)))
 
-    def score(self, target_text: str, context_text: str = "") -> ScoreResult:
-        # 1 nat per character of target text, regardless of context
-        return ScoreResult(num_tokens=len(target_text), total_nats=float(len(target_text)))
-
-
-@pytest.fixture(autouse=True)
-def fake_backend(monkeypatch):
-    monkeypatch.setattr(cli, "get_backend", lambda name: _FakeScorer)
+    monkeypatch.setattr(cli, "score_file", fake)
+    return calls
 
 
 def test_missing_file_returns_error(capsys):
@@ -31,7 +33,7 @@ def test_missing_file_returns_error(capsys):
     assert "no such file" in capsys.readouterr().err
 
 
-def test_human_readable_output(tmp_path: Path, capsys):
+def test_human_readable_output(tmp_path: Path, capsys, fake_score_file):
     f = tmp_path / "a.py"
     f.write_text("abcd")
 
@@ -43,7 +45,7 @@ def test_human_readable_output(tmp_path: Path, capsys):
     assert "bits:" in out
 
 
-def test_json_output(tmp_path: Path, capsys):
+def test_json_output(tmp_path: Path, capsys, fake_score_file):
     f = tmp_path / "a.py"
     f.write_text("abcd")
 
@@ -56,32 +58,31 @@ def test_json_output(tmp_path: Path, capsys):
     assert payload["unit"] == "nats"
 
 
-def test_context_flag_is_passed_through(tmp_path: Path, capsys, monkeypatch):
+def test_context_flag_is_passed_through(tmp_path: Path, fake_score_file):
     f = tmp_path / "a.py"
     f.write_text("ab")
     ctx = tmp_path / "ctx.py"
     ctx.write_text("some context")
 
-    seen = {}
-    original_gather = cli.gather_context
-
-    def spy(paths):
-        seen["paths"] = list(paths)
-        return original_gather(paths)
-
-    monkeypatch.setattr(cli, "gather_context", spy)
-
     cli.main([str(f), "--context", str(ctx)])
 
-    assert seen["paths"] == [str(ctx)]
+    assert fake_score_file[0]["context_paths"] == [str(ctx)]
+
+
+def test_model_flag_is_passed_through(tmp_path: Path, fake_score_file):
+    f = tmp_path / "a.py"
+    f.write_text("ab")
+
+    cli.main([str(f), "--model", "some/model"])
+
+    assert fake_score_file[0]["model_name"] == "some/model"
 
 
 def test_unknown_backend_returns_error(tmp_path: Path, capsys, monkeypatch):
-    monkeypatch.setattr(
-        cli,
-        "get_backend",
-        lambda name: (_ for _ in ()).throw(ValueError(f"unknown backend {name!r}")),
-    )
+    def fake(*args, **kwargs):
+        raise ValueError("unknown backend 'nope'; available: local-lm")
+
+    monkeypatch.setattr(cli, "score_file", fake)
     f = tmp_path / "a.py"
     f.write_text("ab")
 

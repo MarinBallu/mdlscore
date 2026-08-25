@@ -53,6 +53,11 @@ class LocalLMScorer(Scorer):
         with torch.no_grad():
             return self.model(ids).logits[0]
 
+    def _tail(self, ids: list[int]) -> list[int]:
+        """The most recent half-window of `ids`, carried forward as left-context."""
+        keep = min(len(ids), self.window // 2)
+        return ids[len(ids) - keep :] if keep else []
+
     def score(self, target_text: str, context_text: str = "") -> ScoreResult:
         context_ids = self._encode(context_text)
         target_ids = self._encode(target_text)
@@ -62,8 +67,7 @@ class LocalLMScorer(Scorer):
         # Left-context carried into each window: the tail of `context_ids`
         # initially, then the tail of the previous window once we're deep
         # enough into `target_ids` that a single window can't hold it all.
-        carry = min(len(context_ids), self.window // 2)
-        buffer = context_ids[len(context_ids) - carry :] if carry else []
+        buffer = self._tail(context_ids)
 
         total_nats = 0.0
         total_tokens = 0
@@ -79,7 +83,6 @@ class LocalLMScorer(Scorer):
             total_nats += nats
             total_tokens += n
             pos += len(chunk)
-            carry = min(len(input_ids), self.window // 2)
-            buffer = input_ids[len(input_ids) - carry :]
+            buffer = self._tail(input_ids)
 
         return ScoreResult(num_tokens=total_tokens, total_nats=total_nats)
