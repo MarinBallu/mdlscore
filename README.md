@@ -75,5 +75,12 @@ pip install -e ".[dev]"
 pytest
 ```
 
-`tests/test_local_lm_integration.py` downloads a tiny real model and skips
-automatically if there's no network access.
+`tests/test_local_lm_offline.py` runs the real `transformers`/`torch`
+plumbing against a tiny, randomly-initialized GPT-2 built entirely in
+memory (only the network boundary, `from_pretrained`, is faked), so it
+exercises the real API on every run without needing network access.
+
+`tests/test_local_lm_integration.py` additionally downloads a real
+checkpoint from the Hub and skips automatically if there's no network
+access — CI (`.github/workflows/tests.yml`) has internet, so it runs there
+on every push/PR.
